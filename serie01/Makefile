@@ -1,7 +1,7 @@
 CC = gcc
 RM = rm -f
 
-CFLAGS = -O3 -march=native -funroll-loops -fopenmp -ggdb
+CFLAGS = -O3 -march=native -funroll-loops -fopenmp
 LIBS = -lm
 LDFLAGS = -fopenmp
 

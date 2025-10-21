@@ -131,11 +131,16 @@ void compute_forces_bodies(bodies *b)
 {
 	for(int i = 0; i < b->n; ++i) {
 		double ownMassPosition[3] = {b->x[i], b->y[i], b->z[i]};
+		double xQuadrupled[4];
+		for(int c = 0; c < 4; ++c) {
+			xQuadrupled[c] = ownMassPosition[0];
+		}
+		__m256d ownMassPositionXSIMD = ((__m256d*)xQuadrupled)[0];
 		double forceComponents[3] = {0.0, 0.0, 0.0};
 		for(int j = 0; j < b->n; j += VECTOR_SIZE) {
 			double positionDifference[3 * VECTOR_SIZE];
 			for(int k = 0; k < VECTOR_SIZE; ++k) {
-				positionDifference[k] = ownMassPosition[0] - b->x[j+k];
+				*((__m256d*)(void *)positionDifference) = _mm256_sub_pd(ownMassPositionXSIMD, ((__m256d*)(b->x))[j>>2]);
 			}
 			for(int k = 0; k < VECTOR_SIZE; ++k) {
 				positionDifference[VECTOR_SIZE+k] = ownMassPosition[1] - b->y[j+k];
@@ -144,13 +149,8 @@ void compute_forces_bodies(bodies *b)
 				positionDifference[VECTOR_SIZE*2+k] = ownMassPosition[2] - b->z[j+k];
 			}
 			double twoNormsSquared[4] = {0, 0, 0, 0};
-			// for(int component = 0; component < 3; ++component) {
-			// 	for(int k = 0; k < VECTOR_SIZE; ++k) {
-			// 		twoNormsSquared[k] += positionDifference[VECTOR_SIZE*component+k] * positionDifference[VECTOR_SIZE*component+k];
-			// 	}
-			// }
-			for(int k = 0; k < VECTOR_SIZE; ++k) {
-				for(int component = 0; component < 3; ++component) {
+			for(int component = 0; component < 3; ++component) {
+				for(int k = 0; k < VECTOR_SIZE; ++k) {
 					twoNormsSquared[k] += positionDifference[VECTOR_SIZE*component+k] * positionDifference[VECTOR_SIZE*component+k];
 				}
 			}
