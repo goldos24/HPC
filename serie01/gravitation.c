@@ -132,9 +132,8 @@ void compute_forces_bodies(bodies *b)
 	for(int i = 0; i < b->n; ++i) {
 		double ownMassPosition[3] = {b->x[i], b->y[i], b->z[i]};
 		double forceComponents[3] = {0.0, 0.0, 0.0};
-		for(int j = 0; j < b->n; j += 4) {
+		for(int j = 0; j < b->n; j += VECTOR_SIZE) {
 			double positionDifference[3 * VECTOR_SIZE];
-			positionDifference[0] = ownMassPosition[0] - b->x[j];
 			for(int k = 0; k < VECTOR_SIZE; ++k) {
 				positionDifference[k] = ownMassPosition[0] - b->x[j+k];
 			}
@@ -145,15 +144,20 @@ void compute_forces_bodies(bodies *b)
 				positionDifference[VECTOR_SIZE*2+k] = ownMassPosition[2] - b->z[j+k];
 			}
 			double twoNormsSquared[4] = {0, 0, 0, 0};
-			for(int component = 0; component < 3; ++component) {
-				for(int k = 0; k < VECTOR_SIZE; ++k) {
+			// for(int component = 0; component < 3; ++component) {
+			// 	for(int k = 0; k < VECTOR_SIZE; ++k) {
+			// 		twoNormsSquared[k] += positionDifference[VECTOR_SIZE*component+k] * positionDifference[VECTOR_SIZE*component+k];
+			// 	}
+			// }
+			for(int k = 0; k < VECTOR_SIZE; ++k) {
+				for(int component = 0; component < 3; ++component) {
 					twoNormsSquared[k] += positionDifference[VECTOR_SIZE*component+k] * positionDifference[VECTOR_SIZE*component+k];
 				}
 			}
 			double inverseDenominators[VECTOR_SIZE] = {0, 0, 0, 0};
 			for(int k = 0; k < VECTOR_SIZE; ++k) {
 				double denominator = (twoNormsSquared[k] * sqrt(twoNormsSquared[k]));
-				if(denominator != 0) {
+				if(j+k != i) {
 					inverseDenominators[k] = 1.0 / denominator;
 				} else {
 					inverseDenominators[k] = 0;
@@ -161,7 +165,7 @@ void compute_forces_bodies(bodies *b)
 			}
 			for(int component = 0; component < 3; ++component) {
 				for(int k = 0; k < VECTOR_SIZE; ++k) {
-					forceComponents[component] += b->m[j] * positionDifference[component*VECTOR_SIZE+k] * inverseDenominators[k];
+					forceComponents[component] += b->m[j+k] * positionDifference[component*VECTOR_SIZE+k] * inverseDenominators[k];
 				}
 			}
 		}
