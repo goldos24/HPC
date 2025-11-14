@@ -41,7 +41,7 @@ void eval_f(int n, const double *x, double *y)
     }
 }
 
-const int M = 16;
+const int M = 12;
 
 /**
  * Evaluate the 'n' dimensional array of 'x' by the function f and
@@ -49,7 +49,7 @@ const int M = 16;
  */
 void eval_f_avx512(int n, const double *x, double *y)
 {
-	__m256d yi, xiSquared, xi, xi4, case1, case3, alphaVec, betaVec, gammaVec, deltaVec, cmpVec;
+	__m256d yi, xiSquared, xi, xi4, case1, case3, alphaVec, betaVec, gammaVec, deltaVec, lessThanOne, lessThanTwo, allOnes;
 	double currentInverseSignAndDenom = 1, inverseSignAndDenom[M];
 	for(int k = 0; k < M; ++k) {
 		double twiceKPlus1 = k*2+2;
@@ -60,21 +60,22 @@ void eval_f_avx512(int n, const double *x, double *y)
 	betaVec = _mm256_set1_pd(beta);
 	gammaVec = _mm256_set1_pd(gamma);
 	deltaVec = _mm256_set1_pd(delta);
+	allOnes = _mm256_cmp_pd(_mm256_setzero_pd(), _mm256_set1_pd(1.0), _CMP_LT_OS);
 	for(uint i = 0; i < n; i += 4) {
 		xi = _mm256_load_pd(x + i);
 		xiSquared = _mm256_mul_pd(xi, xi);
 		xi4 = _mm256_mul_pd(xiSquared, xiSquared);
 		case1 = _mm256_fmadd_pd(alphaVec, xi4, betaVec);
 		yi = _mm256_set1_pd(inverseSignAndDenom[M-1]);
+		lessThanTwo = _mm256_cmp_pd(xi, _mm256_set1_pd(2), _CMP_LT_OS);
+		lessThanOne = _mm256_cmp_pd(xi, _mm256_set1_pd(1), _CMP_LT_OS);
 		case3 = _mm256_add_pd(_mm256_div_pd(_mm256_set1_pd(1), _mm256_sub_pd(xi, gammaVec)), deltaVec);
 		for(int k = M-1; k-->0; ) {
 			yi = _mm256_fmadd_pd(yi, xiSquared, _mm256_set1_pd(inverseSignAndDenom[k]));
 		}
 		yi = _mm256_mul_pd(yi, xi);
-		cmpVec = _mm256_cmp_pd(xi, _mm256_set1_pd(1), _CMP_LT_OS);
-		yi = _mm256_blendv_pd(yi, case1, cmpVec);
-		cmpVec = _mm256_cmp_pd(xi, _mm256_set1_pd(2), _CMP_LT_OS);
-		yi = _mm256_blendv_pd(case3, yi, cmpVec);
+		yi = _mm256_blendv_pd(yi, case1, lessThanOne);
+		yi = _mm256_blendv_pd(case3, yi, lessThanTwo);
 		_mm256_store_pd(y + i, yi);
 	}
 
