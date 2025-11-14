@@ -35,6 +35,8 @@ typedef union {
 
 void log_diy(int n, const double *x, double *y)
 {
+  u_int64_double u;
+  
   for (int i = 0; i < n; i++)
   {
     double xi = x[i];
@@ -50,7 +52,6 @@ void log_diy(int n, const double *x, double *y)
     // for our taylor series approximation.
     
     // Apply bit-wise operations on float (only works for ints)
-    u_int64_double u;
     u.f = xi;
     unsigned long long exponent_mask = 0x7FF0000000000000ULL;  // = 0111 1111 1111 0000...
     uint16_t m_prime = (uint16_t)((u.i & exponent_mask) >> 52) - 1023 + 1;  // = e - b + 1
@@ -59,7 +60,7 @@ void log_diy(int n, const double *x, double *y)
     double xi_prime = xi * two_pow_minus_m_prime;
     // double xi_prime = xi * (1.0 / (1 << m_prime));  // = xi * 2^{-m'}
     // double xi_prime = xi  / (1 << m_prime);  // = xi * 2^{-m'}
-    
+
     // To compute ln(x) use taylor expansion + horner's method on x':
     // ln(x) = sum^N_{k=0} [ 2 / (2k+1) y^{2k + 1} ]
     //       =  y (2 + y^2(2/3 + y^2(2/5 + y^2(...))))
