@@ -6,3 +6,4 @@
 !*.h
 !Makefile
 !.gitignore
+!serie[0-1][0-9]
