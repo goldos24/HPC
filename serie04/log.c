@@ -128,14 +128,12 @@ void log_avx512(int n, const double *x, double *y)
 			ln_x = _mm256_fmadd_pd(ln_x, xi_prime_frac_squared, _mm256_set1_pd(ln_coefficients[k]));
 		}
 		ln_x = _mm256_mul_pd(ln_x, xi_prime_frac);
+		uint64_t tmp[4];
+		_mm256_storeu_si256((__m256i*)tmp, m_prime);
+		__m256d v_m_prime_d = _mm256_set_pd((double)tmp[3], (double)tmp[2],
+		                                    (double)tmp[1], (double)tmp[0]);
 
-		__m128i m_prime_low_32 = _mm256_castsi256_si128(m_prime);
-		__m128i m_prime_high_32 = _mm_shuffle_epi32(_mm256_extractf128_si256(m_prime, 1), _MM_SHUFFLE(1, 0, 3, 2));
-		__m128i m_prime_32 = _mm_packus_epi32(m_prime_low_32, m_prime_high_32);
-		__m256d m_prime_double = _mm256_cvtepi32_pd(m_prime_32);
-
-		// ln(x) = ln(x') + m'*ln(2) ==> Add m'*ln(2) to result
-		ln_x = _mm256_fmadd_pd(m_prime_double, _mm256_set1_pd(c_ln2), ln_x);
+		ln_x = _mm256_fmadd_pd(v_m_prime_d, _mm256_set1_pd(c_ln2), ln_x);
 
 		_mm256_store_pd(y + i, ln_x);
 	}
