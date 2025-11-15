@@ -87,59 +87,104 @@ void log_diy(int n, const double *x, double *y)
 
 void log_avx512(int n, const double *x, double *y)
 {
+  // Used to extract the exponent from the IEEE 754 double precision floating point representation
+  __m256i v_exponent_mask = _mm256_set1_epi64x(0x7FF0000000000000ULL);  // = 0111 1111 1111 0000... = 0 1^{11} 0^{52}
+  __m256i v_bias = _mm256_set1_epi64x(1023);
+  __m256i v_bias_minus_one = _mm256_set1_epi64x(1022);
+  __m256d v_ones = _mm256_set1_pd(1.0);
+  __m256d v_ln2 = _mm256_set1_pd(c_ln2);  // Load ln(2) constant outside of loop
 
-	u_int64_double u;
-	uint64_t exponent_mask_scalar = 0x7FF0000000000000UL; // = 0111 1111 1111 0000...
-	__m256i exponent_mask = _mm256_set1_epi64x(exponent_mask_scalar);
-	__m256i inverse_exponent_mask = _mm256_set1_epi64x(~exponent_mask_scalar);
-	__m256i operating_exponent = _mm256_set1_epi64x(0x3FE0000000000000UL);
-	for (int i = 0; i < n; i += 4)
-	{
-		__m256d xi = _mm256_load_pd(x + i);
+  uint i = 0;
+  for (; i < n - 3; i+=4)
+  {
+    __m256d v_xi = _mm256_loadu_pd(x + i);
 
-		// Compute ln(x 2^{-m}) + m ln(2) = ln(x) where x' = x 2^{-m} is close to 1
-		// It holds:
-		//	 x' = 1 <==> m = log2(x).
-		// We can use the exponent in the IEEE 754 floating point number representation
-		// for a rough approximation of m:
-		//	 m' = e - b + 1,
-		// where e is the exponent and b is the bias (b = 1023 for doubles).
-		// The maximum deviation from 1 is between [1/2, 1[ which is negligible
-		// for our taylor series approximation.
-		
-		// Apply bit-wise operations on float (only works for ints)
-		__m256i m_prime = _mm256_sub_epi64(_mm256_srli_epi64(_mm256_and_si256(_mm256_castpd_si256(xi), exponent_mask), 52), _mm256_set1_epi64x(1022)); // = e - b + 1
-		__m256d xi_prime = _mm256_castsi256_pd(_mm256_or_si256(_mm256_and_si256(_mm256_castpd_si256(xi), inverse_exponent_mask), operating_exponent));
-		// double xi_prime = xi * (1.0 / (1 << m_prime));	// = xi * 2^{-m'}
-		// double xi_prime = xi	/ (1 << m_prime);	// = xi * 2^{-m'}
+    // Compute ln(x 2^{-m}) + m ln(2) = ln(x) where x' = x 2^{-m} is close to 1
+    // It holds:
+    //   x' = 1 <==> m = log2(x).
+    // We can use the exponent in the IEEE 754 floating point number representation
+    // for a rough approximation of m:
+    //   m' = e - b + 1,
+    // where e is the exponent and b is the bias (b = 1023 for doubles).
+    // The maximum deviation from 1 is between [1/2, 1[ which is negligible
+    // for our taylor series approximation.
+    
+    // In AVX you cannot directly apply bit-wise operations on floating point
+    // numbers. You can however reinterpret them as integers and apply bit-wise
+    // operation on those.
+    // These reinterpretations do not convert the floating point numbers to integers.
+    
+    __m256i v_xi_int_rep = _mm256_castpd_si256(v_xi);  // Reinterpret doubles as ints (No conversion)
 
-		// To compute ln(x) use taylor expansion + horner's method on x':
-		// ln(x) = sum^N_{k=0} [ 2 / (2k+1) y^{2k + 1} ]
-		//			 =	y (2 + y^2(2/3 + y^2(2/5 + y^2(...))))
-		// for y := (x + 1) / (x - 1) and N -> +inf
+    // v_m_prime = e - b + 1
+    __m256i v_m_prime = _mm256_sub_epi64(
+                          _mm256_srli_epi64(
+                            _mm256_and_si256(v_xi_int_rep, v_exponent_mask), 52), v_bias_minus_one);
 
-		__m256d ln_x = _mm256_set1_pd(ln_coefficients[N]);
-		__m256d xi_prime_frac = _mm256_div_pd(_mm256_sub_pd(xi_prime, _mm256_set1_pd(1)), _mm256_add_pd(xi_prime, _mm256_set1_pd(1)));
-		__m256d xi_prime_frac_squared = _mm256_mul_pd(xi_prime_frac, xi_prime_frac);
+    // IEEE 745 double representaion of 2^{-m_prime}
+    __m256i v_ieee754_rep = _mm256_slli_epi64(_mm256_sub_epi64(v_bias, v_m_prime), 52);
+    
+    __m256d v_two_pow_minus_m_prime = _mm256_castsi256_pd(v_ieee754_rep);
+    __m256d v_xi_prime = _mm256_mul_pd(v_xi, v_two_pow_minus_m_prime);
 
-		for (int k = N-1; k >= 0; k--)
-		{
-			// ln_x = ln_x * xi_prime_frac_squared + ln_coefficients[k];
-			ln_x = _mm256_fmadd_pd(ln_x, xi_prime_frac_squared, _mm256_set1_pd(ln_coefficients[k]));
-		}
-		ln_x = _mm256_mul_pd(ln_x, xi_prime_frac);
+    // To compute ln(x) use taylor expansion + horner's method on x':
+    // ln(x) = sum^N_{k=0} [ 2 / (2k+1) y^{2k + 1} ]
+    //       =  y (2 + y^2(2/3 + y^2(2/5 + y^2(...))))
+    // for y := (x - 1) / (x + 1) and N -> +inf
 
-		__m128i m_prime_low_32 = _mm256_castsi256_si128(m_prime);
-		__m128i m_prime_high_32 = _mm_shuffle_epi32(_mm256_extractf128_si256(m_prime, 1), _MM_SHUFFLE(1, 0, 3, 2));
-		__m128i m_prime_32 = _mm_packus_epi32(m_prime_low_32, m_prime_high_32);
-		__m256d m_prime_double = _mm256_cvtepi32_pd(m_prime_32);
+    __m256d v_lnx = _mm256_set1_pd(ln_coefficients[N]);
+    __m256d v_ln_coefficient_k;
+    __m256d v_xi_prime_frac = _mm256_div_pd(_mm256_sub_pd(v_xi_prime, v_ones),
+                                            _mm256_add_pd(v_xi_prime, v_ones));
+    __m256d v_xi_prime_frac_squared = _mm256_mul_pd(v_xi_prime_frac, v_xi_prime_frac);
 
-		// ln(x) = ln(x') + m'*ln(2) ==> Add m'*ln(2) to result
-		ln_x = _mm256_fmadd_pd(m_prime_double, _mm256_set1_pd(c_ln2), ln_x);
+    for (int k = N-1; k >= 0; --k)
+    {
+      //ln_x = ln_x * xi_prime_frac_squared + ln_coefficients[k];
+      v_lnx = _mm256_fmadd_pd(v_xi_prime_frac_squared, v_lnx,
+                              _mm256_set1_pd(ln_coefficients[k]));
+    }
+    //ln_x *= xi_prime_frac;
+    v_lnx = _mm256_mul_pd(v_lnx, v_xi_prime_frac);
 
-		_mm256_store_pd(y + i, ln_x);
-	}
- 
+    // 64-bit integer -> double conversion is not supported in AVX 256
+    // Fallback: Convert back to standard C 64-bit integer and convert them to doubles
+    uint64_t tmp[4];
+    _mm256_storeu_si256((__m256i*)tmp, v_m_prime);
+    __m256d v_m_prime_d = _mm256_set_pd((double)tmp[3], (double)tmp[2],
+                                        (double)tmp[1], (double)tmp[0]);
+    
+    // ln(x) = ln(x') + m'*ln(2) ==> Add m'*ln(2) to result
+    v_lnx = _mm256_fmadd_pd(v_m_prime_d, v_ln2, v_lnx);
+
+    _mm256_storeu_pd(y + i, v_lnx);
+  }
+
+  // Add scalar tail
+  u_int64_double u;
+  unsigned long long exponent_mask = 0x7FF0000000000000ULL;  // = 0111 1111 1111 0000... = 0 1^{11} 0^{52}
+  for (; i < n; i++)
+  {
+    double xi = x[i];
+    u.f = xi;
+    uint16_t m_prime = (uint16_t)((u.i & exponent_mask) >> 52) - 1023 + 1;  // = e - b + 1
+    uint64_t ieee754_rep = (unsigned long long)(1023 - m_prime) << 52;  // IEEE 745 double representaion of 2^{-m_prime}
+    double two_pow_minus_m_prime = *(double*) &ieee754_rep;
+    double xi_prime = xi * two_pow_minus_m_prime;
+
+    double ln_x = ln_coefficients[N];
+    double xi_prime_frac = (xi_prime - 1) / (xi_prime + 1);
+    double xi_prime_frac_squared = xi_prime_frac * xi_prime_frac;
+
+    for (int k = N-1; k >= 0; k--)
+    {
+      ln_x *= xi_prime_frac_squared;
+      ln_x += ln_coefficients[k];
+    }
+    ln_x *= xi_prime_frac;
+    ln_x += m_prime * c_ln2;
+    y[i] = ln_x;
+  }
 }
 
 double rel_error(double *x, double *y, int n)
